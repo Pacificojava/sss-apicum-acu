@@ -95,7 +95,7 @@ app.use((req, res, next) => {
   }
 
   next();
-});
+}); 
 
 const projectRootCandidate = path.resolve(__dirname, '..');
 const projectRoot = fs.existsSync(path.resolve(projectRootCandidate, 'index.html'))
