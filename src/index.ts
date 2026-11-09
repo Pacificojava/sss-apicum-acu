@@ -11,21 +11,21 @@ const port = process.env.PORT || 8080;
 app.use(express.json());
 
 // Define a raiz do projeto
-const projectRoot = path.resolve(__dirname, '..');
+const projectRoot = path.resolve(__dirname, '../../');
 
-// Serve arquivos estáticos da raiz do projeto
 app.use(express.static(projectRoot));
-
-// Serve também a pasta public (se você usar assets nela)
 app.use('/public', express.static(path.join(projectRoot, 'public')));
 
-// Rota principal: envia o index.html
-app.get('/', (_req, res) => {
+app.get('/', (_req: Request, res: Response) => {
+  res.sendFile(path.join(projectRoot, 'index.html'));
+});
+
+app.get('/index.html', (_req: Request, res: Response) => {
   res.sendFile(path.join(projectRoot, 'index.html'));
 });
 
 // Opcional: rota para garantir acesso direto ao index.html
-app.get('/index.html', (_req, res) => {
+app.get('/index.html', (_req: Request, res: Response) => {
   res.sendFile(path.join(projectRoot, 'index.html'));
 });
 
