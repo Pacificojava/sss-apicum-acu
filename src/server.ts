@@ -77,7 +77,7 @@ app.use('/api', (_req: Request, _res: Response, next: NextFunction) => {
   initializeDatabaseOnce().then(() => next()).catch(next);
 });
 
-app.post('/api/auth/validar-contexto', async (req: Request, res: Response) => {
+app.post('/api/auth/validar-contexto', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const chaveContexto = typeof req.body?.chave_contexto === 'string' ? req.body.chave_contexto.trim() : '';
 
@@ -110,11 +110,11 @@ app.post('/api/auth/validar-contexto', async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error('Erro ao validar contexto:', error);
-    return res.status(500).json({ error: 'Não foi possível validar o contexto da igreja.' });
+    return next(error);
   }
 });
 
-app.post('/api/auth/login', async (req: Request, res: Response) => {
+app.post('/api/auth/login', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const chaveContexto = typeof req.body?.chave_contexto === 'string' ? req.body.chave_contexto.trim() : '';
     const login = typeof req.body?.login === 'string' ? req.body.login.trim() : '';
@@ -181,7 +181,7 @@ app.post('/api/auth/login', async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error('Erro ao autenticar usuário:', error);
-    return res.status(500).json({ error: 'Não foi possível realizar o login.' });
+    return next(error);
   }
 });
 
@@ -638,8 +638,10 @@ app.post('/api/frequencias', async (req: Request, res: Response) => {
 
     const alunoId = Number(aluno_id);
     const classeId = Number(classe_id);
+    const dataAula = typeof data_aula === 'string' ? data_aula.trim() : '';
+    const presenteValido = presente === true || presente === false || presente === 1 || presente === 0 ||
+      presente === '1' || presente === '0' || presente === 'true' || presente === 'false';
     const presenteValue = presente === true || presente === 1 || presente === '1' || presente === 'true';
-    const dataAula = typeof data_aula === 'string' && data_aula.trim() ? data_aula.trim() : new Date().toISOString().slice(0, 10);
 
     if (!Number.isInteger(alunoId) || alunoId <= 0) {
       return res.status(400).json({ error: 'O campo aluno_id é obrigatório e deve ser um número válido.' });
@@ -649,7 +651,23 @@ app.post('/api/frequencias', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'O campo classe_id é obrigatório e deve ser um número válido.' });
     }
 
-    const alunoExiste = await get<{ id: number }>('SELECT id FROM alunos WHERE id = ?', [alunoId]);
+    if (!presenteValido) {
+      return res.status(400).json({ error: 'Informe se o aluno esteve presente ou faltou.' });
+    }
+
+    const dataAulaDate = /^\d{4}-\d{2}-\d{2}$/.test(dataAula)
+      ? new Date(`${dataAula}T00:00:00.000Z`)
+      : null;
+
+    if (!dataAulaDate || Number.isNaN(dataAulaDate.getTime()) || dataAulaDate.toISOString().slice(0, 10) !== dataAula) {
+      return res.status(400).json({ error: 'Informe uma data válida para a aula.' });
+    }
+
+    if (dataAulaDate.getUTCDay() !== 0) {
+      return res.status(400).json({ error: 'A frequência da EBD só pode ser registrada em domingos.' });
+    }
+
+    const alunoExiste = await get<{ id: number; classe_id: number }>('SELECT id, classe_id FROM alunos WHERE id = ?', [alunoId]);
     const classeExiste = await get<{ id: number }>('SELECT id FROM classes WHERE id = ?', [classeId]);
 
     if (!alunoExiste) {
@@ -660,8 +678,15 @@ app.post('/api/frequencias', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Classe não encontrada.' });
     }
 
+    if (Number(alunoExiste.classe_id) !== classeId) {
+      return res.status(400).json({ error: 'A turma selecionada não corresponde à turma atual do aluno.' });
+    }
+
     const registro = await run(
-      'INSERT INTO frequencias (data_aula, aluno_id, classe_id, presente) VALUES (?, ?, ?, ?)',
+      `INSERT INTO frequencias (data_aula, aluno_id, classe_id, presente)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT (data_aula, aluno_id, classe_id)
+       DO UPDATE SET presente = EXCLUDED.presente`,
       [dataAula, alunoId, classeId, presenteValue ? 1 : 0],
     );
 
@@ -678,8 +703,8 @@ app.post('/api/frequencias', async (req: Request, res: Response) => {
       [registro.lastID],
     );
 
-    return res.status(201).json({
-      message: 'Frequência registrada com sucesso.',
+    return res.status(200).json({
+      message: 'Frequência do domingo salva com sucesso.',
       ...frequenciaCriada,
     });
   } catch (error) {
@@ -692,9 +717,15 @@ app.get('/api/dashboard/stats', async (_req: Request, res: Response) => {
   try {
     const totalAlunos = await get<{ total: number }>('SELECT COUNT(*) AS total FROM alunos');
     const totalClasses = await get<{ total: number }>('SELECT COUNT(*) AS total FROM classes');
-    const totalFrequencias = await get<{ total: number }>('SELECT COUNT(*) AS total FROM frequencias');
-    const presencas = await get<{ total: number }>('SELECT COUNT(*) AS total FROM frequencias WHERE presente = 1');
-    const faltas = await get<{ total: number }>('SELECT COUNT(*) AS total FROM frequencias WHERE presente = 0');
+    const totalFrequencias = await get<{ total: number }>(
+      'SELECT COUNT(*) AS total FROM frequencias WHERE EXTRACT(DOW FROM data_aula) = 0',
+    );
+    const presencas = await get<{ total: number }>(
+      'SELECT COUNT(*) AS total FROM frequencias WHERE presente = 1 AND EXTRACT(DOW FROM data_aula) = 0',
+    );
+    const faltas = await get<{ total: number }>(
+      'SELECT COUNT(*) AS total FROM frequencias WHERE presente = 0 AND EXTRACT(DOW FROM data_aula) = 0',
+    );
 
     const totalAlunosNumero = Number(totalAlunos?.total ?? 0);
     const totalClassesNumero = Number(totalClasses?.total ?? 0);
@@ -716,6 +747,22 @@ app.get('/api/dashboard/stats', async (_req: Request, res: Response) => {
     res.status(500).json({ error: 'Não foi possível carregar as estatísticas do dashboard.' });
   }
 });
+
+async function getSundayAttendanceHistory(alunoId: number) {
+  return all<{
+    data_aula: string;
+    presente: number;
+    classe_nome: string;
+  }>(
+    `SELECT f.data_aula, f.presente, c.nome_classe AS classe_nome
+     FROM frequencias f
+     INNER JOIN classes c ON c.id = f.classe_id
+     WHERE f.aluno_id = ?
+       AND EXTRACT(DOW FROM f.data_aula) = 0
+     ORDER BY f.data_aula DESC, f.id DESC`,
+    [alunoId],
+  );
+}
 
 app.get('/api/relatorios/aluno', async (req: Request, res: Response) => {
   try {
@@ -744,19 +791,10 @@ app.get('/api/relatorios/aluno', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Aluno não encontrado para o filtro informado.' });
     }
 
-    const totalAulas = await get<{ total: number }>('SELECT COUNT(*) AS total FROM frequencias WHERE aluno_id = ?', [aluno.id]);
-    const totalPresencas = await get<{ total: number }>(
-      'SELECT COUNT(*) AS total FROM frequencias WHERE aluno_id = ? AND presente = 1',
-      [aluno.id],
-    );
-    const totalFaltas = await get<{ total: number }>(
-      'SELECT COUNT(*) AS total FROM frequencias WHERE aluno_id = ? AND presente = 0',
-      [aluno.id],
-    );
-
-    const totalAulasNumero = Number(totalAulas?.total ?? 0);
-    const totalPresencasNumero = Number(totalPresencas?.total ?? 0);
-    const totalFaltasNumero = Number(totalFaltas?.total ?? 0);
+    const historicoFrequencia = await getSundayAttendanceHistory(aluno.id);
+    const totalAulasNumero = historicoFrequencia.length;
+    const totalPresencasNumero = historicoFrequencia.filter((frequencia) => Number(frequencia.presente) === 1).length;
+    const totalFaltasNumero = totalAulasNumero - totalPresencasNumero;
     const taxaFrequencia = totalAulasNumero > 0 ? Number(((totalPresencasNumero / totalAulasNumero) * 100).toFixed(2)) : 0;
 
     const status = taxaFrequencia >= 75 ? 'Frequência OK' : 'Risco de Evasão';
@@ -766,6 +804,10 @@ app.get('/api/relatorios/aluno', async (req: Request, res: Response) => {
       totalAulas: totalAulasNumero,
       totalPresencas: totalPresencasNumero,
       totalFaltas: totalFaltasNumero,
+      faltasDatas: historicoFrequencia
+        .filter((frequencia) => Number(frequencia.presente) === 0)
+        .map(({ data_aula }) => data_aula),
+      historicoFrequencia,
       taxaFrequencia,
       status,
     });
@@ -800,19 +842,10 @@ app.get('/api/relatorios/aluno/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Aluno não encontrado.' });
     }
 
-    const totalAulas = await get<{ total: number }>('SELECT COUNT(*) AS total FROM frequencias WHERE aluno_id = ?', [alunoId]);
-    const totalPresencas = await get<{ total: number }>(
-      'SELECT COUNT(*) AS total FROM frequencias WHERE aluno_id = ? AND presente = 1',
-      [alunoId],
-    );
-    const totalFaltas = await get<{ total: number }>(
-      'SELECT COUNT(*) AS total FROM frequencias WHERE aluno_id = ? AND presente = 0',
-      [alunoId],
-    );
-
-    const totalAulasNumero = Number(totalAulas?.total ?? 0);
-    const totalPresencasNumero = Number(totalPresencas?.total ?? 0);
-    const totalFaltasNumero = Number(totalFaltas?.total ?? 0);
+    const historicoFrequencia = await getSundayAttendanceHistory(alunoId);
+    const totalAulasNumero = historicoFrequencia.length;
+    const totalPresencasNumero = historicoFrequencia.filter((frequencia) => Number(frequencia.presente) === 1).length;
+    const totalFaltasNumero = totalAulasNumero - totalPresencasNumero;
     const taxaFrequencia = totalAulasNumero > 0 ? Number(((totalPresencasNumero / totalAulasNumero) * 100).toFixed(2)) : 0;
 
     return res.json({
@@ -820,6 +853,10 @@ app.get('/api/relatorios/aluno/:id', async (req: Request, res: Response) => {
       totalAulas: totalAulasNumero,
       totalPresencas: totalPresencasNumero,
       totalFaltas: totalFaltasNumero,
+      faltasDatas: historicoFrequencia
+        .filter((frequencia) => Number(frequencia.presente) === 0)
+        .map(({ data_aula }) => data_aula),
+      historicoFrequencia,
       taxaFrequencia,
       status: taxaFrequencia >= 75 ? 'Frequência OK' : 'Risco de Evasão',
     });
@@ -862,7 +899,9 @@ app.get('/api/relatorios/classe/:classe_id', async (req: Request, res: Response)
                 ELSE 'Atenção'
               END AS situacao
        FROM alunos a
-       LEFT JOIN frequencias f ON f.aluno_id = a.id AND f.classe_id = ?
+       LEFT JOIN frequencias f ON f.aluno_id = a.id
+       AND f.classe_id = ?
+       AND EXTRACT(DOW FROM f.data_aula) = 0
        WHERE a.classe_id = ?
        GROUP BY a.id, a.nome
        ORDER BY a.nome ASC`,
@@ -902,7 +941,9 @@ app.get('/api/relatorios/geral', async (_req: Request, res: Response) => {
               ROUND(COALESCE((SUM(CASE WHEN f.presente = 1 THEN 1 ELSE 0 END) * 100.0) / NULLIF(COUNT(f.id), 0), 0), 2) AS media_presenca
        FROM classes c
        LEFT JOIN alunos a ON a.classe_id = c.id
-       LEFT JOIN frequencias f ON f.aluno_id = a.id AND f.classe_id = c.id
+       LEFT JOIN frequencias f ON f.aluno_id = a.id
+       AND f.classe_id = c.id
+       AND EXTRACT(DOW FROM f.data_aula) = 0
        GROUP BY c.id, c.nome_classe
        ORDER BY c.nome_classe ASC`,
     );
@@ -931,6 +972,7 @@ app.get('/api/relatorios/geral', async (_req: Request, res: Response) => {
        FROM alunos a
        INNER JOIN classes c ON c.id = a.classe_id
        LEFT JOIN frequencias f ON f.aluno_id = a.id
+       AND EXTRACT(DOW FROM f.data_aula) = 0
        GROUP BY a.id, a.nome, c.nome_classe
        ORDER BY a.nome ASC`,
     );
@@ -992,7 +1034,9 @@ app.get('/api/relatorios/trimestre/:trimestre', async (req: Request, res: Respon
               ROUND(COALESCE((SUM(CASE WHEN f.presente = 1 THEN 1 ELSE 0 END) * 100.0) / NULLIF(COUNT(f.id), 0), 0), 2) AS media_presenca
        FROM classes c
        LEFT JOIN alunos a ON a.classe_id = c.id
-       LEFT JOIN frequencias f ON f.aluno_id = a.id AND f.classe_id = c.id
+       LEFT JOIN frequencias f ON f.aluno_id = a.id
+       AND f.classe_id = c.id
+       AND EXTRACT(DOW FROM f.data_aula) = 0
        AND EXTRACT(MONTH FROM f.data_aula)::int BETWEEN ? AND ?
        GROUP BY c.id, c.nome_classe
        ORDER BY c.nome_classe ASC`,
@@ -1023,6 +1067,7 @@ app.get('/api/relatorios/trimestre/:trimestre', async (req: Request, res: Respon
        FROM alunos a
        INNER JOIN classes c ON c.id = a.classe_id
        LEFT JOIN frequencias f ON f.aluno_id = a.id
+       AND EXTRACT(DOW FROM f.data_aula) = 0
        AND EXTRACT(MONTH FROM f.data_aula)::int BETWEEN ? AND ?
        GROUP BY a.id, a.nome, c.nome_classe
        ORDER BY a.nome ASC`,
@@ -1055,9 +1100,30 @@ app.get('/api/relatorios/trimestre/:trimestre', async (req: Request, res: Respon
   }
 });
 
+function getErrorCode(error: unknown): string | undefined {
+  let current = error;
+
+  while (typeof current === 'object' && current !== null) {
+    if ('code' in current && typeof current.code === 'string') {
+      return current.code;
+    }
+
+    current = 'cause' in current ? current.cause : null;
+  }
+
+  return undefined;
+}
+
 app.use((error: Error & { status?: number; type?: string }, _req: Request, res: Response, _next: NextFunction) => {
   if (error?.type === 'entity.parse.failed') {
     return res.status(400).json({ error: 'JSON inválido enviado na requisição.' });
+  }
+
+  if (['ENETUNREACH', 'ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'ECONNRESET', 'EHOSTUNREACH', 'EAI_AGAIN'].includes(getErrorCode(error) ?? '')) {
+    console.error('Banco de dados indisponível:', error);
+    return res.status(503).json({
+      error: 'Não foi possível conectar ao banco de dados. Verifique a DATABASE_URL no arquivo .env e confirme que o banco está acessível.',
+    });
   }
 
   console.error('Erro interno do servidor:', error);
@@ -1065,16 +1131,9 @@ app.use((error: Error & { status?: number; type?: string }, _req: Request, res: 
 });
 
 export function startServer(): void {
-  initializeDatabaseOnce()
-    .then(() => {
-      app.listen(PORT, '0.0.0.0', () => {
-        console.log(`Servidor SSS rodando na porta ${PORT}`);
-      });
-    })
-    .catch((error) => {
-      console.error('Não foi possível iniciar o servidor SSS:', error);
-      process.exit(1);
-    });
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Servidor SSS rodando na porta ${PORT}`);
+  });
 }
 
 export default app;

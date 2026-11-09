@@ -15,10 +15,15 @@ async function requestJson(url, options = {}) {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${API_BASE}${url}`, {
-    ...options,
-    headers,
-  });
+  let response;
+  try {
+    response = await fetch(`${API_BASE}${url}`, {
+      ...options,
+      headers,
+    });
+  } catch {
+    throw new Error('Não foi possível acessar o servidor local. Inicie o sistema com npm run dev e abra http://localhost:8080.');
+  }
 
   const contentType = response.headers.get('content-type') || '';
   const isJson = contentType.includes('application/json');
@@ -27,8 +32,12 @@ async function requestJson(url, options = {}) {
   if (!response.ok) {
     const message = typeof payload === 'object' && payload && payload.error
       ? payload.error
-      : 'Erro inesperado ao processar a solicitação.';
+      : `O servidor respondeu com HTTP ${response.status}. Confirme que o backend local está atualizado.`;
     throw new Error(message);
+  }
+
+  if (!isJson) {
+    throw new Error('A API retornou uma resposta inesperada. Inicie a versão local com npm run dev e abra http://localhost:8080.');
   }
 
   return payload;

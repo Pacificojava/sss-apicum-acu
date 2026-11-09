@@ -219,14 +219,19 @@
 
               <form id="frequenciaForm" class="mini-form">
                 <div class="mb-3">
+                  <label class="form-label" for="dataAula">Domingo da EBD</label>
+                  <input id="dataAula" class="form-control form-control-sm attendance-date" type="date" required />
+                  <small class="text-muted">O registro de frequência é permitido somente aos domingos.</small>
+                </div>
+                <div class="mb-3">
                   <label class="form-label">Aluno</label>
-                  <select id="alunoSelect" class="form-select form-select-sm" required>
+                  <select id="alunoSelect" class="form-select form-select-sm attendance-student" required>
                     <option value="">Selecione o aluno</option>
                   </select>
                 </div>
                 <div class="mb-3">
                   <label class="form-label">Turma</label>
-                  <select id="classeSelect" class="form-select form-select-sm classeSelect" required>
+                  <select id="classeSelect" class="form-select form-select-sm classeSelect attendance-class" required>
                     <option value="">Escolha a turma</option>
                   </select>
                 </div>
@@ -381,14 +386,19 @@
             <form id="frequenciaFormSection" class="mini-form">
               <div class="row g-3">
                 <div class="col-md-6">
+                  <label class="form-label" for="dataAulaSection">Domingo da EBD</label>
+                  <input id="dataAulaSection" class="form-control form-control-sm attendance-date" type="date" required />
+                  <small class="text-muted">O registro de frequência é permitido somente aos domingos.</small>
+                </div>
+                <div class="col-md-6">
                   <label class="form-label">Aluno</label>
-                  <select id="alunoSelectSection" class="form-select form-select-sm" required>
+                  <select id="alunoSelectSection" class="form-select form-select-sm attendance-student" required>
                     <option value="">Selecione o aluno</option>
                   </select>
                 </div>
                 <div class="col-md-6">
                   <label class="form-label">Turma</label>
-                  <select id="classeSelectSection" class="form-select form-select-sm classeSelect" required>
+                  <select id="classeSelectSection" class="form-select form-select-sm classeSelect attendance-class" required>
                     <option value="">Escolha a turma</option>
                   </select>
                 </div>
@@ -525,6 +535,23 @@
                 <tbody id="relatorioAlunoTableBody">
                   <tr>
                     <td colspan="7" class="text-center text-muted">Nenhum dado carregado.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <h3 class="h6 mt-4">Histórico individual por domingo</h3>
+            <div class="table-responsive">
+              <table class="table table-striped table-hover align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th>Data da EBD</th>
+                    <th>Turma</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="relatorioAlunoHistoricoBody">
+                  <tr>
+                    <td colspan="3" class="text-center text-muted">Selecione um aluno para visualizar o histórico.</td>
                   </tr>
                 </tbody>
               </table>

@@ -10,11 +10,16 @@ if (!connectionString) {
 
 const shouldUseSsl =
   Boolean(connectionString) &&
-  (connectionString.includes('supabase.co') || process.env.NODE_ENV === 'production' || process.env.VERCEL === '1');
+  (
+    connectionString.includes('supabase.co') ||
+    connectionString.includes('supabase.com') ||
+    process.env.NODE_ENV === 'production'
+  );
 
 export const db = new Pool({
   connectionString,
   ssl: shouldUseSsl ? { rejectUnauthorized: false } : false,
+  connectionTimeoutMillis: 10000,
 });
 
 let databaseInitialized = false;

@@ -28,7 +28,6 @@ import {
 import { LOGO_CONFIG, createLogoMarkup, getLogoConfig } from './logo-config.js';
 
 const state = {
-  selectedStatus: true,
   trimestre: 1,
 };
 
@@ -382,12 +381,16 @@ function formatPercent(value) {
 
 function renderRelatorioAluno(report) {
   const tbody = document.querySelector('#relatorioAlunoTableBody');
+  const historyBody = document.querySelector('#relatorioAlunoHistoricoBody');
   const card = document.querySelector('#relatorioAlunoSummary');
 
   if (!tbody) return;
 
   if (!report || !report.aluno) {
     tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">Nenhum dado disponível.</td></tr>';
+    if (historyBody) {
+      historyBody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">Selecione um aluno para visualizar o histórico.</td></tr>';
+    }
     if (card) {
       card.innerHTML = '<span class="badge bg-secondary">Selecione um aluno</span>';
     }
@@ -397,6 +400,10 @@ function renderRelatorioAluno(report) {
   const taxa = Number(report.taxaFrequencia ?? 0);
   const statusClass = taxa >= 75 ? 'bg-success' : 'bg-danger';
   const statusLabel = taxa >= 75 ? 'Frequência OK' : 'Risco de Evasão';
+  const faltasDatas = report.faltasDatas || [];
+  const faltasFormatadas = faltasDatas.length
+    ? faltasDatas.map(formatAttendanceDate).join(', ')
+    : 'Nenhuma falta registrada';
 
   tbody.innerHTML = `
     <tr>
@@ -410,6 +417,22 @@ function renderRelatorioAluno(report) {
     </tr>
   `;
 
+  if (historyBody) {
+    const history = report.historicoFrequencia || [];
+    historyBody.innerHTML = history.length
+      ? history.map((frequencia) => {
+        const presente = Number(frequencia.presente) === 1;
+        return `
+          <tr>
+            <td>${formatAttendanceDate(frequencia.data_aula)}</td>
+            <td>${frequencia.classe_nome || report.aluno.classe_nome || '—'}</td>
+            <td><span class="badge ${presente ? 'bg-success' : 'bg-danger'}">${presente ? 'Presente' : 'Faltou'}</span></td>
+          </tr>
+        `;
+      }).join('')
+      : '<tr><td colspan="3" class="text-center text-muted">Ainda não há frequência registrada para este aluno.</td></tr>';
+  }
+
   if (card) {
     card.innerHTML = `
       <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2">
@@ -419,8 +442,20 @@ function renderRelatorioAluno(report) {
         </div>
         <span class="badge ${statusClass}">${statusLabel}</span>
       </div>
+      <div class="mt-3">
+        <small class="text-muted d-block">Domingos em que faltou</small>
+        <strong>${faltasFormatadas}</strong>
+      </div>
     `;
   }
+}
+
+function formatAttendanceDate(dateValue) {
+  const dateOnly = String(dateValue).slice(0, 10);
+  const date = new Date(`${dateOnly}T00:00:00`);
+  return Number.isNaN(date.getTime())
+    ? dateValue
+    : date.toLocaleDateString('pt-BR');
 }
 
 function renderRelatorioClasse(report) {
@@ -654,11 +689,9 @@ async function loadAlunos() {
     renderAlunoRows(alunos, '#alunosTableBody');
     renderAlunoRows(alunos, '#alunosTableBodySection');
 
-    const selects = [document.querySelector('#alunoSelect'), document.querySelector('#alunoSelectSection')];
-    selects.forEach((select) => {
-      if (!select) return;
+    document.querySelectorAll('.attendance-student').forEach((select) => {
       select.innerHTML = '<option value="">Selecione o aluno</option>' + alunos
-        .map((aluno) => `<option value="${aluno.id}">${aluno.nome}</option>`)
+        .map((aluno) => `<option value="${aluno.id}" data-classe-id="${aluno.classe_id}">${aluno.nome}</option>`)
         .join('');
     });
 
@@ -1022,14 +1055,37 @@ async function exportDashboardPdf() {
   }
 }
 
-function setPresencaStatus(value) {
-  state.selectedStatus = value;
+function setPresencaStatus(value, form) {
+  if (!form) return;
+  form.dataset.presente = String(value);
 
-  document.querySelectorAll('.status-btn').forEach((button) => {
+  form.querySelectorAll('.status-btn').forEach((button) => {
     const active = button.dataset.presente === String(value);
     button.classList.toggle('active', active);
     button.setAttribute('aria-pressed', String(active));
   });
+}
+
+function formatLocalDateInput(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getMostRecentSunday() {
+  const sunday = new Date();
+  sunday.setHours(0, 0, 0, 0);
+  sunday.setDate(sunday.getDate() - sunday.getDay());
+  return formatLocalDateInput(sunday);
+}
+
+function isSundayDate(value) {
+  if (!value) return false;
+  const date = new Date(`${value}T00:00:00`);
+  return !Number.isNaN(date.getTime()) &&
+    date.getDay() === 0 &&
+    formatLocalDateInput(date) === value;
 }
 
 function bindPresenceForm() {
@@ -1038,39 +1094,71 @@ function bindPresenceForm() {
   forms.forEach((form) => {
     if (!form) return;
 
+    setPresencaStatus(true, form);
+
+    const dateInput = form.querySelector('.attendance-date');
+    if (dateInput) {
+      dateInput.value = getMostRecentSunday();
+      dateInput.addEventListener('change', () => {
+        dateInput.setCustomValidity(isSundayDate(dateInput.value)
+          ? ''
+          : 'Selecione um domingo para registrar a frequência da EBD.');
+      });
+    }
+
+    const studentSelect = form.querySelector('.attendance-student');
+    const classSelect = form.querySelector('.attendance-class');
+    studentSelect?.addEventListener('change', () => {
+      const selectedOption = studentSelect.selectedOptions[0];
+      const studentClassId = selectedOption?.dataset.classeId;
+      if (classSelect && studentClassId) {
+        classSelect.value = studentClassId;
+      }
+    });
+
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
 
-      const alunoId = Number(
-        document.querySelector('#alunoSelect')?.value ||
-        document.querySelector('#alunoSelectSection')?.value ||
-        0,
-      );
-
-      const classeId = Number(
-        document.querySelector('#classeSelect')?.value ||
-        document.querySelector('#classeSelectSection')?.value ||
-        0,
-      );
+      const alunoId = Number(form.querySelector('.attendance-student')?.value || 0);
+      const classeId = Number(form.querySelector('.attendance-class')?.value || 0);
+      const dataAula = dateInput?.value || '';
 
       if (!alunoId || !classeId) {
         showToast('Selecione aluno e turma para registrar presença.', 'error');
         return;
       }
 
+      if (!isSundayDate(dataAula)) {
+        showToast('Selecione um domingo para registrar a frequência da EBD.', 'error');
+        dateInput?.focus();
+        return;
+      }
+
       const payload = {
         aluno_id: alunoId,
         classe_id: classeId,
-        presente: state.selectedStatus,
-        data_aula: new Date().toISOString().slice(0, 10),
+        presente: form.dataset.presente === 'true',
+        data_aula: dataAula,
       };
 
       try {
         const response = await savePresenca(payload);
-        showToast('Presença registrada com sucesso!', 'success');
+        showToast(payload.presente ? 'Presença registrada com sucesso!' : 'Falta registrada com sucesso!', 'success');
         form.reset();
-        setPresencaStatus(true);
-        await Promise.all([loadDashboardStats(), loadAlunos()]);
+        if (dateInput) dateInput.value = getMostRecentSunday();
+        setPresencaStatus(true, form);
+        const reportStudentSelect = document.querySelector('#alunoRelatorioSelect');
+        const reportNameInput = document.querySelector('#relatorioAlunoNome');
+        if (reportStudentSelect) reportStudentSelect.value = String(alunoId);
+        if (reportNameInput) reportNameInput.value = '';
+        await Promise.all([
+          loadDashboardStats(),
+          loadAlunos(),
+          loadRelatorioClasseData(),
+          loadRelatorioGeralData(),
+          loadRelatorioTrimestreData(Number(document.querySelector('#trimestreRelatorioSelect')?.value || 1)),
+          loadRelatorioAlunoData(),
+        ]);
         activateSection('frequencia');
         return response;
       } catch (error) {
@@ -1211,7 +1299,7 @@ function bindNewUsuarioForm() {
 function bindStatusButtons() {
   document.querySelectorAll('.status-btn').forEach((button) => {
     button.addEventListener('click', () => {
-      setPresencaStatus(button.dataset.presente === 'true');
+      setPresencaStatus(button.dataset.presente === 'true', button.closest('form'));
     });
   });
 }
@@ -1480,7 +1568,6 @@ async function initialize() {
   }
 
   activateSection('dashboard');
-  setPresencaStatus(true);
 
   const [stats, alunos, classes, usuarios, agendas, cargos] = await Promise.all([
     loadDashboardStats(),

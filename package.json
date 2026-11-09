@@ -2,19 +2,18 @@
   "name": "sistema-gestao-ebd",
   "version": "1.0.0",
   "description": "Solution Sunday School (SSS) backend and web app",
-  "main": "dist/src/index.js",
+  "main": "dist/index.js",
   "scripts": {
     "dev": "ts-node src/index.ts",
     "build": "npx tsc",
-    "start": "node dist/src/index.js",
+    "start": "node dist/index.js",
     "test": "echo \"No tests configured\" && exit 0"
   },
   "keywords": [
     "sss",
     "ebd",
     "express",
-    "postgres",
-    "vercel"
+    "postgres"
   ],
   "author": "",
   "license": "ISC",
