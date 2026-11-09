@@ -6,22 +6,8 @@ import jwt from 'jsonwebtoken';
 
 import { all, get, initializeDatabase, run } from './database';
 
-declare global {
-  namespace Express {
-    interface Request {
-      user?: {
-        id_usuario: number;
-        nivel_perfil: string;
-        id_igreja: number;
-        id_congregacao?: number | null;
-        chave_contexto: string;
-      };
-    }
-  }
-}
-
 const app = express();
-const PORT = Number(process.env.PORT) || 3000;
+const PORT = Number(process.env.PORT) || 8080;
 const JWT_SECRET = process.env.JWT_SECRET ?? 'sss-dev-secret-key-change-me';
 const ALUNO_CARGOS = [
   'Pastor',
@@ -39,48 +25,6 @@ const ALUNO_CARGOS = [
   'Cordenador(a) de adolescentes',
   'Cordenador(a) de EBD',
 ];
-
-function requireAuth(req: Request, res: Response, next: NextFunction): void {
-  const authHeader = req.headers.authorization ?? '';
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-
-  if (!token) {
-    res.status(401).json({ error: 'Token de autenticação ausente.' });
-    return;
-  }
-
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET) as {
-      id_usuario: number;
-      nivel_perfil: string;
-      id_igreja: number;
-      id_congregacao?: number | null;
-      chave_contexto: string;
-    };
-
-    req.user = decoded;
-    next();
-  } catch (error) {
-    console.error('Erro ao validar JWT:', error);
-    res.status(401).json({ error: 'Sessão inválida ou expirada.' });
-  }
-}
-
-function requireRole(roles: string[]) {
-  return (req: Request, res: Response, next: NextFunction): void => {
-    if (!req.user) {
-      res.status(401).json({ error: 'Autenticação obrigatória.' });
-      return;
-    }
-
-    if (!roles.includes(req.user.nivel_perfil)) {
-      res.status(403).json({ error: 'Você não possui permissão para executar esta ação.' });
-      return;
-    }
-
-    next();
-  };
-}
 
 app.use(express.json({ limit: '1mb' }));
 
@@ -102,8 +46,11 @@ const projectRoot = fs.existsSync(path.resolve(projectRootCandidate, 'index.html
   ? projectRootCandidate
   : path.resolve(projectRootCandidate, '..');
 
-app.use(express.static(projectRoot));
 app.use('/public', express.static(path.resolve(projectRoot, 'public')));
+
+app.get('/styles.css', (_req: Request, res: Response) => {
+  res.sendFile(path.join(projectRoot, 'styles.css'));
+});
 
 app.get('/', (_req: Request, res: Response) => {
   res.sendFile(path.join(projectRoot, 'index.html'));
@@ -111,6 +58,23 @@ app.get('/', (_req: Request, res: Response) => {
 
 app.get('/index.html', (_req: Request, res: Response) => {
   res.sendFile(path.join(projectRoot, 'index.html'));
+});
+
+let databaseInitialization: Promise<void> | null = null;
+
+function initializeDatabaseOnce(): Promise<void> {
+  if (!databaseInitialization) {
+    databaseInitialization = initializeDatabase().catch((error: unknown) => {
+      databaseInitialization = null;
+      throw error;
+    });
+  }
+
+  return databaseInitialization;
+}
+
+app.use('/api', (_req: Request, _res: Response, next: NextFunction) => {
+  initializeDatabaseOnce().then(() => next()).catch(next);
 });
 
 app.post('/api/auth/validar-contexto', async (req: Request, res: Response) => {
@@ -233,19 +197,6 @@ app.get('/api/usuarios', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Erro ao buscar usuários:', error);
     res.status(500).json({ error: 'Não foi possível listar os usuários.' });
-  }
-});
-
-app.get('/api/professores', async (_req: Request, res: Response) => {
-  try {
-    const usuarios = await all<{ id: number; nome: string; login: string; nivel_perfil: string }>(
-      'SELECT id, nome, login, nivel_perfil FROM usuarios ORDER BY nome ASC',
-    );
-
-    res.json(usuarios);
-  } catch (error) {
-    console.error('Erro ao buscar professores:', error);
-    res.status(500).json({ error: 'Não foi possível listar os professores.' });
   }
 });
 
@@ -1114,16 +1065,7 @@ app.use((error: Error & { status?: number; type?: string }, _req: Request, res: 
 });
 
 export function startServer(): void {
-  const shouldListen = process.env.NODE_ENV !== 'production';
-
-  if (!shouldListen) {
-    initializeDatabase().catch((error) => {
-      console.error('Não foi possível inicializar o banco no ambiente serverless:', error);
-    });
-    return;
-  }
-
-  initializeDatabase()
+  initializeDatabaseOnce()
     .then(() => {
       app.listen(PORT, '0.0.0.0', () => {
         console.log(`Servidor SSS rodando na porta ${PORT}`);
@@ -1136,4 +1078,3 @@ export function startServer(): void {
 }
 
 export default app;
-module.exports = app;
